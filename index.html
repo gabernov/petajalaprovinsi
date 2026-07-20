@@ -84,10 +84,21 @@
       font-size: 10px; font-weight: 600; margin-left: 4px;
     }
     .search-empty { padding: 14px; text-align: center; color: #64748b; font-size: 12px; }
-    .search-divider {
-      padding: 5px 14px; font-size: 10px; font-weight: 700;
+    .search-section-header {
+      padding: 6px 14px; font-size: 10px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.05em;
-      color: #64748b; background: rgba(0,0,0,0.15);
+      color: #94a3b8; background: rgba(0,0,0,0.12);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .search-more {
+      padding: 8px 14px; font-size: 11px; color: #38bdf8;
+      cursor: pointer; text-align: center;
+      border-top: 1px solid #334155; transition: background 0.1s;
+    }
+    .search-more:hover { background: #334155; }
+    .search-info {
+      padding: 8px 14px; font-size: 11px; color: #64748b; text-align: center;
+      border-top: 1px solid #334155;
     }
     #search-dropdown::-webkit-scrollbar { width: 4px; }
     #search-dropdown::-webkit-scrollbar-track { background: transparent; }
@@ -289,7 +300,10 @@
     body.light .search-item:hover { background: #f1f5f9; }
     body.light .search-item .s-name { color: #0f172a; }
     body.light .search-item .s-meta { color: #94a3b8; }
-    body.light .search-divider { background: rgba(0,0,0,0.04); color: #94a3b8; }
+    body.light .search-section-header { background: rgba(0,0,0,0.04); color: #94a3b8; }
+    body.light .search-more { color: #2563eb; border-top-color: #e2e8f0; }
+    body.light .search-more:hover { background: #f1f5f9; }
+    body.light .search-info { color: #94a3b8; border-top-color: #e2e8f0; }
     body.light #legend { background: #ffffff; color: #1e293b; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
     body.light #legend h4 { color: #0f172a; }
     body.light #basemap-btn { background: #ffffff; color: #1e293b; border-color: #cbd5e1; }
@@ -955,14 +969,17 @@
 
     // Search roads from loaded data
     let roadHtml = "";
+    let roadTotal = 0;
     let roadResults = [];
     if (roadsGeoJSON) {
-      roadResults = roadsGeoJSON.features.filter(f => {
+      const allRoads = roadsGeoJSON.features.filter(f => {
         const name = (f.properties.nama || "").toLowerCase();
         const kode = (f.properties.kode_number || "").toLowerCase();
         const code = (f.properties.kode || "").toLowerCase();
         return name.includes(q) || kode.includes(q) || code.includes(q);
-      }).slice(0, 10);
+      });
+      roadTotal = allRoads.length;
+      roadResults = allRoads.slice(0, 10);
 
       if (roadResults.length > 0) {
         roadHtml = roadResults.map((f, i) => {
@@ -978,13 +995,23 @@
       }
     }
 
-    // Show road results immediately, then fetch Nominatim
-    searchDropdown.innerHTML = roadHtml || `<div class="search-empty">Mencari...</div>`;
-    searchDropdown.style.display = "block";
+    // Store for later use (Nominatim may rebuild with Places first)
     searchDropdown._results = roadResults;
+    searchDropdown._roadTotal = roadTotal;
     searchDropdown._nomResults = null;
 
-    // Debounced Nominatim lookup
+    // Show road results immediately
+    if (roadHtml) {
+      if (roadTotal > roadResults.length) {
+        roadHtml += `<div class="search-info">${roadTotal - roadResults.length} jalan lainnya...</div>`;
+      }
+      searchDropdown.innerHTML = roadHtml;
+    } else {
+      searchDropdown.innerHTML = `<div class="search-empty">Mencari...</div>`;
+    }
+    searchDropdown.style.display = "block";
+
+    // Debounced Nominatim lookup — results appear ABOVE roads when they arrive
     nomTimer = setTimeout(async () => {
       nomAbort = new AbortController();
       try {
@@ -993,21 +1020,34 @@
           { signal: nomAbort.signal, headers: { 'User-Agent': 'PetaJalanProvinsi/1.0' } }
         );
         const data = await resp.json();
-        if (!data || data.length === 0) {
-          if (!roadHtml) {
-            searchDropdown.innerHTML = `<div class="search-empty">Tidak ditemukan</div>`;
-          }
-          return;
+        const hasPlaces = data && data.length > 0;
+        const hasRoads = roadHtml.length > 0;
+
+        // Build sections: Places FIRST, Roads SECOND
+        let html = "";
+
+        if (hasPlaces) {
+          html += `<div class="search-section-header">📍 Places</div>`;
+          html += data.map((r, i) => `
+            <div class="search-item" data-nom="${i}">
+              <div class="s-name">${escHtml(r.display_name.split(",")[0])}</div>
+              <div class="s-meta">${escHtml(r.display_name.split(",").slice(1).join(",").trim())}</div>
+            </div>
+          `).join("");
+          html += `<div class="search-more" data-nom-more>Cari di OpenStreetMap ↗</div>`;
         }
 
-        let html = roadHtml;
-        if (roadHtml) html += `<div class="search-divider">📍 Places</div>`;
-        html += data.map((r, i) => `
-          <div class="search-item" data-nom="${i}">
-            <div class="s-name">📍 ${escHtml(r.display_name.split(",")[0])}</div>
-            <div class="s-meta">${escHtml(r.display_name.split(",").slice(1).join(",").trim())}</div>
-          </div>
-        `).join("");
+        if (hasRoads) {
+          if (hasPlaces) html += `<div class="search-section-header">🛣️ Jalan</div>`;
+          html += roadHtml;
+          if (roadTotal > roadResults.length) {
+            html += `<div class="search-info">${roadTotal - roadResults.length} jalan lainnya...</div>`;
+          }
+        }
+
+        if (!hasPlaces && !hasRoads) {
+          html = `<div class="search-empty">Tidak ditemukan</div>`;
+        }
 
         searchDropdown.innerHTML = html;
         searchDropdown._nomResults = data;
@@ -1024,6 +1064,14 @@
   }
 
   searchDropdown.addEventListener("click", (e) => {
+    // Check for Nominatim "more" link
+    const nomMore = e.target.closest("[data-nom-more]");
+    if (nomMore) {
+      const q = searchInput.value.trim();
+      if (q) window.open(`https://nominatim.openstreetmap.org/search.php?q=${encodeURIComponent(q)}`, "_blank");
+      return;
+    }
+
     const item = e.target.closest(".search-item");
     if (!item) return;
 

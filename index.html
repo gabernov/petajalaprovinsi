@@ -1151,15 +1151,25 @@
         deselectRoad();
         clearHighlight();
 
-        // 1. Immediate: zoom to Nominatim bounding box (smooth, instant)
+        // 1. Immediate: zoom to Nominatim bounding box (smooth, instant).
+        //    Nominatim bbox format: [min_lat, max_lat, min_lon, max_lon] as strings.
+        //    LngLatBounds takes (SW, NE) = ([min_lng, min_lat], [max_lng, max_lat]).
+        //    IMPORTANT: LngLatBounds does NOT normalize swapped corners — passing
+        //    (max_lng, min_lat) as SW creates an INVERTED bounds (west > east)
+        //    which makes fitBounds zoom out to world view.
         const bbox = r.boundingbox;
         if (bbox && bbox.length === 4) {
-          const b = new maplibregl.LngLatBounds(
-            [parseFloat(bbox[3]), parseFloat(bbox[0])],
-            [parseFloat(bbox[2]), parseFloat(bbox[1])]
-          );
-          if (!b.isEmpty()) {
-            map.fitBounds(b, { padding: 40, maxZoom: 16, duration: 800 });
+          const minLat = parseFloat(bbox[0]);
+          const maxLat = parseFloat(bbox[1]);
+          const minLng = parseFloat(bbox[2]);
+          const maxLng = parseFloat(bbox[3]);
+          if (isFinite(minLat) && isFinite(maxLat) && isFinite(minLng) && isFinite(maxLng)) {
+            const b = new maplibregl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
+            if (!b.isEmpty()) {
+              map.fitBounds(b, { padding: 40, maxZoom: 16, duration: 800 });
+            } else {
+              map.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
+            }
           } else {
             map.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
           }

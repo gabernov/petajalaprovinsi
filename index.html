@@ -1063,41 +1063,67 @@
     return d.innerHTML;
   }
 
-  // ─── HIGHLIGHT BOUNDING BOX ──────────────────────────────
+  // ─── OSM GEOMETRY HIGHLIGHT ───────────────────────────────
   function clearHighlight() {
-    ["hl-fill","hl-outline"].forEach(id => {
+    ["hl-fill","hl-line","hl-glow"].forEach(id => {
       if (map.getLayer(id)) map.removeLayer(id);
     });
     if (map.getSource("hl")) map.removeSource("hl");
   }
 
-  function highlightBounds(bbox) {
-    clearHighlight();
-    if (!bbox || bbox.length !== 4) return;
-    const sw = [parseFloat(bbox[3]), parseFloat(bbox[0])];
-    const ne = [parseFloat(bbox[2]), parseFloat(bbox[1])];
-    if (isNaN(sw[0]) || isNaN(sw[1]) || isNaN(ne[0]) || isNaN(ne[1])) return;
-
-    const geojson = {
-      type: "Feature",
-      geometry: {
-        type: "Polygon",
-        coordinates: [[
-          [sw[0], sw[1]],
-          [ne[0], sw[1]],
-          [ne[0], ne[1]],
-          [sw[0], ne[1]],
-          [sw[0], sw[1]]
-        ]]
+  // Recursively extract [lng, lat] pairs from any GeoJSON geometry
+  // Handles Point, LineString, Polygon, MultiPolygon, MultiLineString
+  function geometryBounds(geom) {
+    const b = new maplibregl.LngLatBounds();
+    if (!geom || !geom.coordinates) return b;
+    function walk(c) {
+      if (!Array.isArray(c) || c.length === 0) return;
+      if (typeof c[0] === "number") {
+        const [lng, lat] = c;
+        if (isFinite(lng) && isFinite(lat) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90) {
+          b.extend([lng, lat]);
+        }
+        return;
       }
-    };
+      for (const child of c) walk(child);
+    }
+    walk(geom.coordinates);
+    return b;
+  }
 
+  function renderHighlight(geojson) {
+    clearHighlight();
+    if (!geojson || !geojson.geometry) return;
+    const t = geojson.geometry.type;
     map.addSource("hl", { type: "geojson", data: geojson });
-    map.addLayer({ id: "hl-fill", type: "fill", source: "hl",
-      paint: { "fill-color": "#00e5ff", "fill-opacity": 0.08 } });
-    map.addLayer({ id: "hl-outline", type: "line", source: "hl",
-      paint: { "line-color": "#00e5ff", "line-width": 2, "line-opacity": 0.7,
-               "line-dasharray": [3, 3] } });
+    if (t === "Polygon" || t === "MultiPolygon") {
+      map.addLayer({ id: "hl-fill", type: "fill", source: "hl",
+        paint: { "fill-color": "#00e5ff", "fill-opacity": 0.10, "fill-outline-color": "#00e5ff" } });
+      map.addLayer({ id: "hl-line", type: "line", source: "hl",
+        paint: { "line-color": "#00e5ff", "line-width": 2, "line-opacity": 0.9 } });
+    } else if (t === "LineString" || t === "MultiLineString") {
+      map.addLayer({ id: "hl-glow", type: "line", source: "hl",
+        paint: { "line-color": "#00e5ff", "line-width": 8, "line-opacity": 0.25 } });
+      map.addLayer({ id: "hl-line", type: "line", source: "hl",
+        paint: { "line-color": "#00e5ff", "line-width": 3, "line-opacity": 0.9 } });
+    }
+  }
+
+  // Fetch real OSM geometry via Nominatim details endpoint
+  async function loadOSMGeometry(osmType, osmId) {
+    if (!osmType || !osmId) return null;
+    const typeChar = osmType.charAt(0).toUpperCase(); // relation→R, way→W, node→N
+    const url = `https://nominatim.openstreetmap.org/details?osmtype=${typeChar}&osmid=${osmId}&format=json&polygon_geojson=1&accept-language=id`;
+    try {
+      const resp = await fetch(url, { headers: { "User-Agent": "PetaJalanProvinsi/1.0" } });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (!data.geometry || !data.geometry.coordinates) return null;
+      return { type: "Feature", geometry: data.geometry, properties: data };
+    } catch (e) {
+      console.warn("Nominatim details:", e.message);
+      return null;
+    }
   }
 
   searchDropdown.addEventListener("click", (e) => {
@@ -1121,19 +1147,33 @@
         deselectRoad();
         clearHighlight();
 
-        // Zoom to Nominatim bounding box
+        // 1. Immediate: zoom to Nominatim bounding box (smooth, instant)
         const bbox = r.boundingbox;
         if (bbox && bbox.length === 4) {
-          highlightBounds(bbox);
-          map.fitBounds(new maplibregl.LngLatBounds(
+          const b = new maplibregl.LngLatBounds(
             [parseFloat(bbox[3]), parseFloat(bbox[0])],
             [parseFloat(bbox[2]), parseFloat(bbox[1])]
-          ), { padding: 40, maxZoom: 16, duration: 1000 });
+          );
+          if (b.isValid()) {
+            map.fitBounds(b, { padding: 40, maxZoom: 16, duration: 800 });
+          } else {
+            map.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
+          }
         } else {
-          map.flyTo({ center: [lng, lat], zoom: 15, duration: 1000 });
+          map.flyTo({ center: [lng, lat], zoom: 14, duration: 800 });
         }
 
-        // Popup
+        // 2. Async: fetch real OSM geometry, render highlight + re-fit
+        loadOSMGeometry(r.osm_type, r.osm_id).then(geojson => {
+          if (!geojson) return;
+          renderHighlight(geojson);
+          const b = geometryBounds(geojson.geometry);
+          if (b.isValid() && b.getWest() !== b.getEast() && b.getSouth() !== b.getNorth()) {
+            map.fitBounds(b, { padding: 40, maxZoom: 16, duration: 600 });
+          }
+        });
+
+        // 3. Popup
         setTimeout(() => {
           new maplibregl.Popup({ maxWidth: "320px" })
             .setLngLat([lng, lat])

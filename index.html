@@ -1034,7 +1034,7 @@
               <div class="s-meta">${escHtml(r.display_name.split(",").slice(1).join(",").trim())}</div>
             </div>
           `).join("");
-          html += `<div class="search-more" data-nom-more>Cari di OpenStreetMap ↗</div>`;
+          html += `<div class="search-info">${data.length} hasil</div>`;
         }
 
         if (hasRoads) {
@@ -1064,14 +1064,6 @@
   }
 
   searchDropdown.addEventListener("click", (e) => {
-    // Check for Nominatim "more" link
-    const nomMore = e.target.closest("[data-nom-more]");
-    if (nomMore) {
-      const q = searchInput.value.trim();
-      if (q) window.open(`https://nominatim.openstreetmap.org/search.php?q=${encodeURIComponent(q)}`, "_blank");
-      return;
-    }
-
     const item = e.target.closest(".search-item");
     if (!item) return;
 

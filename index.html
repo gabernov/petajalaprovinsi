@@ -1073,12 +1073,35 @@
       const lng = parseFloat(item.dataset.lng);
       placeCoordMarker(lng, lat);
     } else if (item.dataset.nom !== undefined) {
-      // Nominatim result
+      // Nominatim result — single marker + popup, no double popup
       const r = searchDropdown._nomResults[parseInt(item.dataset.nom)];
       if (r) {
         const lng = parseFloat(r.lon);
         const lat = parseFloat(r.lat);
-        placeCoordMarker(lng, lat);
+
+        // Remove previous marker
+        if (coordMarker) coordMarker.remove();
+        const el = document.createElement("div");
+        el.className = "coord-marker";
+        coordMarker = new maplibregl.Marker({ element: el })
+          .setLngLat([lng, lat])
+          .addTo(map);
+
+        // Fit to region bounding box if available, otherwise fly to point
+        const bbox = r.boundingbox;
+        if (bbox && bbox.length === 4) {
+          const bounds = new maplibregl.LngLatBounds(
+            [parseFloat(bbox[3]), parseFloat(bbox[0])],
+            [parseFloat(bbox[2]), parseFloat(bbox[1])]
+          );
+          map.fitBounds(bounds, { padding: 40, maxZoom: 14, duration: 1000 });
+        } else {
+          map.flyTo({ center: [lng, lat], zoom: 15, duration: 1000 });
+        }
+
+        // Deselect any previously highlighted road
+        deselectRoad();
+
         setTimeout(() => {
           new maplibregl.Popup({ maxWidth: "320px" })
             .setLngLat([lng, lat])

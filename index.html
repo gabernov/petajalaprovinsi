@@ -686,10 +686,9 @@
     zoom: 0,
     pitch: 0,
   });
-  // Force globe projection. Must be set explicitly because the URL
-  // style above doesn't include projection, and MapLibre 5.x requires
-  // explicit opt-in to globe mode.
-  map.setProjection({ type: "globe" });
+  // Force globe projection once the style is loaded (setProjection
+  // requires the style to be done loading).
+  map.once("load", () => map.setProjection({ type: "globe" }));
   map.addControl(new maplibregl.NavigationControl(), "bottom-right");
   map.addControl(new maplibregl.ScaleControl({ maxWidth: 200 }), "bottom-left");
 
@@ -704,7 +703,7 @@
     });
     map.addLayer(starfield, firstLayerId);
     // Re-apply globe projection — the layer add can reset style state
-    map.setProjection({ type: "globe" });
+    if (map.isStyleLoaded()) map.setProjection({ type: "globe" });
   }
 
   let roadsGeoJSON = null;
